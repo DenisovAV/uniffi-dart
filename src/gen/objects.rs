@@ -2,8 +2,9 @@ use std::fmt::Debug;
 
 use genco::prelude::*;
 use heck::ToLowerCamelCase;
-use uniffi_bindgen::interface::{AsType, Method, Object, ObjectImpl, UniffiTrait};
-use uniffi_bindgen::pipeline::general::nodes::Literal;
+use uniffi_bindgen::interface::{
+    AsType, Literal, Method, Object, ObjectImpl, TraitKind, UniffiTrait,
+};
 
 use super::defaults::render_argument_param;
 use super::stream::generate_stream;
@@ -43,8 +44,14 @@ impl CodeType for ObjectCodeType {
     fn ffi_converter_name(&self) -> String {
         match self.imp {
             ObjectImpl::Struct => self.canonical_name().to_string(), // Objects will use factory methods
-            ObjectImpl::CallbackTrait => format!("FfiConverterCallbackInterface{}", self.id),
-            ObjectImpl::Trait => self.canonical_name().to_string(),
+            // Foreign-implementable traits (with_foreign / callback_interface) are
+            // lowered through a callback-interface FfiConverter. Mirrors
+            // uniffi's `ObjectImpl::has_callback_interface()` (Both | ForeignOnly).
+            ObjectImpl::Trait(TraitKind::Both | TraitKind::ForeignOnly) => {
+                format!("FfiConverterCallbackInterface{}", self.id)
+            }
+            // A pure Rust-only trait object uses its own class as the converter.
+            ObjectImpl::Trait(TraitKind::RustOnly) => self.canonical_name().to_string(),
         }
     }
 }
