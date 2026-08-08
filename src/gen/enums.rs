@@ -35,7 +35,7 @@ impl CodeType for EnumCodeType {
     }
 
     fn ffi_converter_name(&self) -> String {
-        format!("FfiConverter{}", &DartCodeOracle::class_name(&self.id))
+        format!("FfiConverter{}", DartCodeOracle::class_name(&self.id))
     }
 }
 
