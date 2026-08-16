@@ -53,7 +53,17 @@ jobs:
           EOF
 
       - name: Generate dart bindings and run tests
-        run: cd rust-payjoin/payjoin-ffi/dart && bash scripts/generate_bindings.sh && dart test
+        run: |
+          cd rust-payjoin/payjoin-ffi/dart
+          bash scripts/generate_bindings.sh
+          echo "===== failing call sites ====="
+          for ln in 5444 5733 8108 12214 13049 13141; do
+            echo "--- payjoin.dart:$ln ---"
+            sed -n "$((ln-4)),$((ln+1))p" lib/payjoin.dart
+          done
+          echo "===== ForeignBytes usages in generated file ====="
+          grep -n 'ForeignBytes' lib/payjoin.dart | head -40
+          dart test
 
   test-bdk:
     name: Test bdk-dart Bindings
