@@ -40,9 +40,12 @@ jobs:
           # 0.32 metadata that the 0.32 uniffi-dart bindgen can read.
           find rust-payjoin -name Cargo.toml -exec \
             sed -i -E 's/"=?0\.31(\.[0-9]+)?"/"0.32"/g' {} +
-          # uniffi 0.32 needs rustc >= 1.91; drop the repo toolchain pin (1.85.1)
-          # so the runner's stable is used, to test source (not MSRV) compatibility.
-          find rust-payjoin -name 'rust-toolchain*' -delete
+          # 0.32 needs rustc >= 1.91: bump the pinned toolchain in place (the dart
+          # build hook reads this file, so edit rather than delete it).
+          find rust-payjoin -name 'rust-toolchain*' -exec \
+            sed -i -E 's/channel = ".*"/channel = "1.91"/' {} +
+          # refresh the lock so toml resolves to 1.x for the 0.32 uniffi-dart.
+          find rust-payjoin -name Cargo.lock -delete
           cat >> rust-payjoin/Cargo.toml << 'EOF'
 
           [patch.'https://github.com/Uniffi-Dart/uniffi-dart.git']
@@ -84,9 +87,12 @@ jobs:
           # 0.32 metadata that the 0.32 uniffi-dart bindgen can read.
           find bdk-dart -name Cargo.toml -exec \
             sed -i -E 's/"=?0\.31(\.[0-9]+)?"/"0.32"/g' {} +
-          # uniffi 0.32 needs rustc >= 1.91; drop the repo toolchain pin (1.85.1)
-          # so the runner's stable is used, to test source (not MSRV) compatibility.
-          find bdk-dart -name 'rust-toolchain*' -delete
+          # 0.32 needs rustc >= 1.91: bump the pinned toolchain in place (the dart
+          # build hook reads this file, so edit rather than delete it).
+          find bdk-dart -name 'rust-toolchain*' -exec \
+            sed -i -E 's/channel = ".*"/channel = "1.91"/' {} +
+          # refresh the lock so toml resolves to 1.x for the 0.32 uniffi-dart.
+          find bdk-dart -name Cargo.lock -delete
           cat >> bdk-dart/native/Cargo.toml << 'EOF'
 
           [patch.'https://github.com/Uniffi-Dart/uniffi-dart']
