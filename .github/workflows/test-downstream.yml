@@ -36,6 +36,10 @@ jobs:
 
       - name: Patch uniffi-dart dependency
         run: |
+          # Probe: force uniffi-rs 0.32 in the downstream so its compiled .so emits
+          # 0.32 metadata that the 0.32 uniffi-dart bindgen can read.
+          find rust-payjoin -name Cargo.toml -exec \
+            sed -i -E 's/"=?0\.31(\.[0-9]+)?"/"0.32"/g' {} +
           cat >> rust-payjoin/Cargo.toml << 'EOF'
 
           [patch.'https://github.com/Uniffi-Dart/uniffi-dart.git']
@@ -73,6 +77,10 @@ jobs:
 
       - name: Patch uniffi-dart dependency
         run: |
+          # Probe: force uniffi-rs 0.32 in the downstream so its compiled .so emits
+          # 0.32 metadata that the 0.32 uniffi-dart bindgen can read.
+          find bdk-dart -name Cargo.toml -exec \
+            sed -i -E 's/"=?0\.31(\.[0-9]+)?"/"0.32"/g' {} +
           cat >> bdk-dart/native/Cargo.toml << 'EOF'
 
           [patch.'https://github.com/Uniffi-Dart/uniffi-dart']
