@@ -50,6 +50,12 @@ jobs:
         # rust-payjoin ships 0.32 upstream.
         run: |
           sed -i 's/uniffi = { version = "0.31.2"/uniffi = { version = "0.32"/g' rust-payjoin/payjoin-ffi/Cargo.toml
+          # payjoin's native-assets build pins rustc 1.85.1 (< uniffi 0.32's 1.91
+          # floor); rewrite every rust-toolchain.toml to the job's installed
+          # stable (>=1.91), keeping the stable channel it was already on.
+          for f in $(find rust-payjoin -name rust-toolchain.toml); do
+            printf '[toolchain]\nchannel = "stable"\n' > "$f"
+          done
           echo "--- payjoin-ffi uniffi pins now ---"
           grep -n 'uniffi = ' rust-payjoin/payjoin-ffi/Cargo.toml || true
 
@@ -113,10 +119,12 @@ jobs:
           # Lockfile pins uniffi 0.31.2 / the old bdk-ffi rev; drop it so the bump
           # and patches re-resolve cleanly.
           rm -f bdk-dart/native/Cargo.lock
-          # bdk-dart pins rustc 1.85.1 via rust-toolchain.toml, but uniffi 0.32
-          # (via our uniffi-dart) needs 1.91 — drop the pin so the job's installed
-          # stable toolchain (>=1.91) is used.
-          find bdk-dart bdk-ffi -name rust-toolchain.toml -delete 2>/dev/null || true
+          # bdk-dart/bdk-ffi pin rustc 1.85.1 via rust-toolchain.toml, but uniffi
+          # 0.32 (via our uniffi-dart) needs 1.91 — rewrite each to the job's
+          # installed stable (>=1.91), keeping the stable channel.
+          for f in $(find bdk-dart bdk-ffi -name rust-toolchain.toml); do
+            printf '[toolchain]\nchannel = "stable"\n' > "$f"
+          done
           echo "--- bdk-dart native uniffi pins now ---"
           grep -n 'uniffi = ' bdk-dart/native/Cargo.toml || true
 
