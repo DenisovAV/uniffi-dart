@@ -8,8 +8,11 @@ void main() {
     // API unchanged and restore the generated files even when a test fails.
     final originals = <File, String>{};
     try {
+      // The shared runtime is a separate file only when the generator splits it
+      // out; single-file bindings carry it inside input_scratch.dart.
       for (final name in ['input_scratch.dart', 'uniffi_runtime.dart']) {
         final file = File(name);
+        if (name == 'uniffi_runtime.dart' && !file.existsSync()) continue;
         final source = file.readAsStringSync();
         originals[file] = source;
         final import = RegExp(r'''import ["']package:ffi/ffi.dart["'];''');
