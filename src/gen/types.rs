@@ -296,7 +296,9 @@ impl Renderer<(FunctionDefinition, dart::Tokens)> for TypeHelpersRenderer<'_> {
                 }
             }
 
-            void uniffiFreeRustBuffer(Object? value) {
+            // Generic rather than `Object?`: in single-file bindings a user type
+            // named `Object` shadows dart:core's.
+            void uniffiFreeRustBuffer<V>(V value) {
                 if (value is RustBuffer) {
                     value.free();
                 }
