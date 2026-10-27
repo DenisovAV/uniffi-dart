@@ -288,7 +288,14 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
                 return value.uniffiClonePointer();
             }
 
+            // Set by dispose(); _ptr is then dangling, so cloning it would be a
+            // native use-after-free rather than a Dart error.
+            bool _uniffiDisposed = false;
+
             Pointer<Void> uniffiClonePointer() {
+                if (_uniffiDisposed) {
+                    throw StateError("$cls_name was used after dispose()");
+                }
                 return rustCall((status) => $ffi_object_clone_name(_ptr, status));
             }
 
@@ -310,6 +317,10 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             }
 
             void dispose() {
+                if (_uniffiDisposed) {
+                    return;
+                }
+                _uniffiDisposed = true;
                 _$finalizer_cls_name.detach(this);
                 rustCall((status) => $ffi_object_free_name(_ptr, status));
             }
@@ -485,6 +496,25 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         quote!(null)
     };
 
+    // Lower every argument into a local BEFORE cloning `self`: the clone takes a
+    // Rust reference that only the FFI call releases, so a lowering that throws
+    // (an out-of-range integer, a disposed object argument) after the clone
+    // would leak it, keeping the object (and any file lock it holds) alive.
+    // Object arguments are lowered last for the same reason: lowering one
+    // clones it.
+    let is_object_arg = |arg: &uniffi_bindgen::interface::Argument| {
+        matches!(arg.as_type(), uniffi_bindgen::interface::Type::Object { .. })
+    };
+    let arguments = func.arguments();
+    let lowered_args = quote!(
+        $(for arg in arguments.iter().filter(|a| !is_object_arg(a)) =>
+            final $(lowered_arg_name(arg)) = $(DartCodeOracle::lower_arg_with_callback_handling(arg));
+        )
+        $(for arg in arguments.iter().filter(|a| is_object_arg(a)) =>
+            final $(lowered_arg_name(arg)) = $(DartCodeOracle::lower_arg_with_callback_handling(arg));
+        )
+    );
+
     if func.is_async() {
         // For async methods returning objects, we need to convert the int pointer to Pointer<Void>
         let async_lifter = if let Some(ret_type) = func.return_type() {
@@ -500,10 +530,11 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
 
         quote!(
             Future<$ret> $(DartCodeOracle::fn_name(func.name()))($args) {
+                $lowered_args
                 return uniffiRustCallAsync(
                   () => $(func.ffi_func().name())(
                     uniffiClonePointer(),
-                    $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                    $(for arg in &arguments => $(lowered_arg_name(arg)),)
                   ),
                   $(DartCodeOracle::async_poll(func, type_helper.get_ci())),
                   $(DartCodeOracle::async_complete(func, type_helper.get_ci())),
@@ -517,10 +548,11 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
     } else if ret == quote!(void) {
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
+                $lowered_args
                 return rustCall((status) {
                     $(func.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                        $(for arg in &arguments => $(lowered_arg_name(arg)),) status
                     );
                 }, $error_handler);
             }
@@ -528,10 +560,11 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
     } else {
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
+                $lowered_args
                 return rustCallWithLifter(
                     (status) => $(func.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                        $(for arg in &arguments => $(lowered_arg_name(arg)),) status
                     ),
                     $lifter,
                     $error_handler
@@ -539,6 +572,11 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
             }
         )
     }
+}
+
+/// Name of the local holding an argument's lowered value.
+fn lowered_arg_name(arg: &uniffi_bindgen::interface::Argument) -> String {
+    format!("{}Lowered", DartCodeOracle::var_name(arg.name()))
 }
 
 fn generate_trait_helpers(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> dart::Tokens {

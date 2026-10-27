@@ -264,6 +264,7 @@ impl Renderer<(FunctionDefinition, dart::Tokens)> for TypeHelpersRenderer<'_> {
             }
 
             T rustCall<T>(T Function(Pointer<RustCallStatus>) callback, [UniffiRustCallStatusErrorHandler? errorHandler]) {
+                uniffiEnsureInitialized();
                 final status = calloc<RustCallStatus>();
                 try {
                     final result = callback(status);
@@ -276,6 +277,7 @@ impl Renderer<(FunctionDefinition, dart::Tokens)> for TypeHelpersRenderer<'_> {
 
             // New version that separates FFI call from lifting to avoid deserializing garbage on error
             T rustCallWithLifter<T, F>(F Function(Pointer<RustCallStatus>) ffiCall, T Function(F) lifter, [UniffiRustCallStatusErrorHandler? errorHandler]) {
+                uniffiEnsureInitialized();
                 final status = calloc<RustCallStatus>();
                 try {
                     final rawResult = ffiCall(status);
@@ -458,6 +460,7 @@ impl Renderer<(FunctionDefinition, dart::Tokens)> for TypeHelpersRenderer<'_> {
                 T Function(F) liftFunc, [
                 UniffiRustCallStatusErrorHandler? errorHandler,
             ]) async {
+                uniffiEnsureInitialized();
                 final rustFuture = rustFutureFunc();
                 final completer = Completer<int>();
                 final handle = _uniffiRustFutureContinuationHandles.insert(completer);

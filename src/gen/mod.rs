@@ -208,6 +208,20 @@ impl<'a> DartWrapper<'a> {
                 _checkApiChecksums();
             }
 
+            bool _uniffiInitialized = false;
+
+            // Runs the contract-version and API-checksum checks before the first
+            // call into the library, so a binding loaded against a different
+            // native build fails at once instead of misdecoding results. Marked
+            // done only after the checks pass: a mismatch fails every call.
+            void uniffiEnsureInitialized() {
+                if (_uniffiInitialized) {
+                    return;
+                }
+                ensureInitialized();
+                _uniffiInitialized = true;
+            }
+
             // Backwards-compatible entry point used by existing tests
             @Deprecated("Use ensureInitialized instead")
             void initialize() {
