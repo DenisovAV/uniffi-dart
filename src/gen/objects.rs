@@ -292,10 +292,14 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             // native use-after-free rather than a Dart error.
             bool _uniffiDisposed = false;
 
-            Pointer<Void> uniffiClonePointer() {
+            void uniffiCheckNotDisposed() {
                 if (_uniffiDisposed) {
-                    throw StateError("$cls_name was used after dispose()");
+                    throw StateError($(quoted(format!("{cls_name} was used after dispose()"))));
                 }
+            }
+
+            Pointer<Void> uniffiClonePointer() {
+                uniffiCheckNotDisposed();
                 return rustCall((status) => $ffi_object_clone_name(_ptr, status));
             }
 
@@ -530,12 +534,17 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
 
         quote!(
             Future<$ret> $(DartCodeOracle::fn_name(func.name()))($args) {
-                $lowered_args
+                // Inside the closure, so a disposed object or a failed lowering
+                // surfaces as a failed Future, as any other error of this call.
                 return uniffiRustCallAsync(
-                  () => $(func.ffi_func().name())(
-                    uniffiClonePointer(),
-                    $(for arg in &arguments => $(lowered_arg_name(arg)),)
-                  ),
+                  () {
+                    uniffiCheckNotDisposed();
+                    $lowered_args
+                    return $(func.ffi_func().name())(
+                      uniffiClonePointer(),
+                      $(for arg in &arguments => $(lowered_arg_name(arg)),)
+                    );
+                  },
                   $(DartCodeOracle::async_poll(func, type_helper.get_ci())),
                   $(DartCodeOracle::async_complete(func, type_helper.get_ci())),
                   $(DartCodeOracle::async_free(func, type_helper.get_ci())),
@@ -548,6 +557,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
     } else if ret == quote!(void) {
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
+                uniffiCheckNotDisposed();
                 $lowered_args
                 return rustCall((status) {
                     $(func.ffi_func().name())(
@@ -560,6 +570,7 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
     } else {
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
+                uniffiCheckNotDisposed();
                 $lowered_args
                 return rustCallWithLifter(
                     (status) => $(func.ffi_func().name())(
@@ -741,14 +752,14 @@ fn generate_trait_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> 
                 if (value is $(&impl_name)) {
                     return value.uniffiClonePointer();
                 }
-                throw UnsupportedError("Only Rust-implemented $cls_name values are supported.");
+                throw UnsupportedError($(quoted(format!("Only Rust-implemented {cls_name} values are supported."))));
             }
 
             static int allocationSize($cls_name value) {
                 if (value is $(&impl_name)) {
                     return $(&impl_name).allocationSize(value);
                 }
-                throw UnsupportedError("Only Rust-implemented $cls_name values are supported.");
+                throw UnsupportedError($(quoted(format!("Only Rust-implemented {cls_name} values are supported."))));
             }
 
             static LiftRetVal<$cls_name> read(Uint8List buf) {
@@ -782,12 +793,26 @@ fn generate_trait_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> 
 
             static int allocationSize($(&impl_name) _) => 8;
 
+            // See the plain object class: set by dispose(), checked before use.
+            bool _uniffiDisposed = false;
+
+            void uniffiCheckNotDisposed() {
+                if (_uniffiDisposed) {
+                    throw StateError($(quoted(format!("{cls_name} was used after dispose()"))));
+                }
+            }
+
             Pointer<Void> uniffiClonePointer() {
+                uniffiCheckNotDisposed();
                 return rustCall((status) => $ffi_object_clone_name(_ptr, status));
             }
 
             @override
             void dispose() {
+                if (_uniffiDisposed) {
+                    return;
+                }
+                _uniffiDisposed = true;
                 $(&finalizer_field).detach(this);
                 rustCall((status) => $ffi_object_free_name(_ptr, status));
             }

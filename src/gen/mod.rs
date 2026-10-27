@@ -191,7 +191,7 @@ impl<'a> DartWrapper<'a> {
                 final bindingsVersion = $(self.ci.uniffi_contract_version());
                 final scaffoldingVersion = $(self.ci.ffi_uniffi_contract_version().name())();
                 if (bindingsVersion != scaffoldingVersion) {
-                  throw UniffiInternalError.panicked("UniFFI contract version mismatch: bindings version $bindingsVersion, scaffolding version $scaffoldingVersion");
+                  throw UniffiInternalError.panicked("UniFFI contract version mismatch: bindings version " + bindingsVersion.toString() + ", scaffolding version " + scaffoldingVersion.toString());
                 }
             }
 
