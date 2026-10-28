@@ -259,7 +259,7 @@ impl Renderer<(FunctionDefinition, dart::Tokens)> for TypeHelpersRenderer<'_> {
                         );
                     });
                 } else {
-                throw UniffiInternalError.panicked("Unexpected RustCallStatus code: ${status.ref.code}");
+                throw UniffiInternalError.panicked("Unexpected RustCallStatus code: " + status.ref.code.toString());
                 }
             }
 
@@ -355,7 +355,7 @@ impl Renderer<(FunctionDefinition, dart::Tokens)> for TypeHelpersRenderer<'_> {
 
                 @override
                 String toString() {
-                return "RustBuffer{capacity: $capacity, len: $len, data: $data}";
+                return "RustBuffer{capacity: " + capacity.toString() + ", len: " + len.toString() + ", data: " + data.toString() + "}";
                 }
             }
 

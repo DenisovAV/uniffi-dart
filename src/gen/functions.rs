@@ -5,6 +5,7 @@ use uniffi_bindgen::interface::{AsType, Function};
 use super::defaults::render_argument_param;
 use super::oracle::AsCodeType;
 use super::render::TypeHelperRenderer;
+use crate::gen::objects::{lower_arguments_first, lowered_arg_name};
 use crate::gen::oracle::DartCodeOracle;
 use crate::gen::render::AsRenderable;
 
@@ -37,6 +38,10 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
     };
 
     // Use centralized callback-aware argument lowering
+    // See `lower_arguments_first`: no argument is lowered inside the call.
+    let arguments = func.arguments();
+    let lowered_args = lower_arguments_first(&arguments);
+
     if func.is_async() {
         // For async methods returning objects, we need to convert the int pointer to Pointer<Void>
         let async_lifter = if let Some(ret_type) = func.return_type() {
@@ -53,9 +58,12 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
         quote!(
             Future<$ret> $(DartCodeOracle::fn_name(func.name()))($args) {
                 return uniffiRustCallAsync(
-                  () => $(func.ffi_func().name())(
-                    $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
-                  ),
+                  () {
+                    $(&lowered_args)
+                    return $(func.ffi_func().name())(
+                      $(for arg in &arguments => $(lowered_arg_name(arg)),)
+                    );
+                  },
                   $(DartCodeOracle::async_poll(func, type_helper.get_ci())),
                   $(DartCodeOracle::async_complete(func, type_helper.get_ci())),
                   $(DartCodeOracle::async_free(func, type_helper.get_ci())),
@@ -67,9 +75,10 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
     } else if ret == quote!(void) {
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
+                $(&lowered_args)
                 return rustCall((status) {
                     $(func.ffi_func().name())(
-                        $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                        $(for arg in &arguments => $(lowered_arg_name(arg)),) status
                     );
                 }, $error_handler);
             }
@@ -77,9 +86,10 @@ pub fn generate_function(func: &Function, type_helper: &dyn TypeHelperRenderer) 
     } else {
         quote!(
             $ret $(DartCodeOracle::fn_name(func.name()))($args) {
+                $(&lowered_args)
                 return rustCallWithLifter(
                     (status) => $(func.ffi_func().name())(
-                        $(for arg in &func.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),) status
+                        $(for arg in &arguments => $(lowered_arg_name(arg)),) status
                     ),
                     $lifter,
                     $error_handler

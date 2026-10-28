@@ -153,9 +153,9 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             )})
         };
 
-        let ffi_call_args = quote!($(for arg in constructor.arguments() =>
-            $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
-        );
+        let ctor_arguments = constructor.arguments();
+        let lowered_ctor_args = lower_arguments_first(&ctor_arguments);
+        let ffi_call_args = quote!($(for arg in &ctor_arguments => $(lowered_arg_name(arg)),));
 
         // Ensure argument types are included
         for arg in constructor.arguments() {
@@ -166,9 +166,12 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
             async_constructor_factories.push(quote! {
                 static Future<$cls_name> $(DartCodeOracle::fn_name(constructor_name))($dart_params) {
                     return uniffiRustCallAsync(
-                      () => $ffi_func_name(
-                        $ffi_call_args
-                      ),
+                      () {
+                        $(&lowered_ctor_args)
+                        return $ffi_func_name(
+                          $(&ffi_call_args)
+                        );
+                      },
                       $(DartCodeOracle::async_poll(constructor, type_helper.get_ci())),
                       $(DartCodeOracle::async_complete(constructor, type_helper.get_ci())),
                       $(DartCodeOracle::async_free(constructor, type_helper.get_ci())),
@@ -180,12 +183,17 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
         } else {
             constructor_definitions.push(quote! {
                 // Public constructor
-                $dart_constructor_decl($dart_params) : _ptr = rustCall((status) =>
-                    $ffi_func_name(
-                        $ffi_call_args status
-                    ),
-                    $error_handler
-                ) {
+                // The arguments are lowered inside a closure because an
+                // initializer list cannot hold statements.
+                $dart_constructor_decl($dart_params) : _ptr = (() {
+                    $(&lowered_ctor_args)
+                    return rustCall((status) =>
+                        $ffi_func_name(
+                            $(&ffi_call_args) status
+                        ),
+                        $error_handler
+                    );
+                })() {
                      _$finalizer_cls_name.attach(this, _ptr, detach: this);
                 }
             });
@@ -267,6 +275,10 @@ pub fn generate_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> da
           rustCall((status) => $ffi_object_free_name(ptr, status));
         });
 
+        // The object owns a native reference: a copy sent to another isolate
+        // would share it with no shared dispose state, so a dispose or
+        // finalizer on one side frees memory the other still uses.
+        @pragma("vm:isolate-unsendable")
         class $cls_name $implements_clause {
             late final Pointer<Void> _ptr;
 
@@ -356,6 +368,7 @@ fn generate_callback_trait_rust_impl(
         .map(|method| generate_callback_trait_rust_method(method, type_helper));
 
     quote! {
+        @pragma("vm:isolate-unsendable")
         final class $(&impl_name) implements $cls_name {
             $(&impl_name)._internal(this._ptr) {
                 $(&finalizer_field).attach(this, _ptr, detach: this);
@@ -368,11 +381,25 @@ fn generate_callback_trait_rust_impl(
 
             Pointer<Void> _ptr;
 
+            // See the plain object class: set by dispose(), checked before use.
+            bool _uniffiDisposed = false;
+
+            void uniffiCheckNotDisposed() {
+                if (_uniffiDisposed) {
+                    throw StateError($(quoted(format!("{cls_name} was used after dispose()"))));
+                }
+            }
+
             Pointer<Void> uniffiClonePointer() {
+                uniffiCheckNotDisposed();
                 return rustCall((status) => $ffi_object_clone_name(_ptr, status));
             }
 
             void dispose() {
+                if (_uniffiDisposed) {
+                    return;
+                }
+                _uniffiDisposed = true;
                 $(&finalizer_field).detach(this);
                 rustCall((status) => $ffi_object_free_name(_ptr, status));
             }
@@ -411,6 +438,9 @@ fn generate_callback_trait_rust_method(
         quote!(null)
     };
 
+    let arguments = method.arguments();
+    let lowered_args = lower_arguments_first(&arguments);
+
     if method.is_async() {
         let async_lifter = if let Some(ret_type) = method.return_type() {
             match ret_type {
@@ -427,10 +457,14 @@ fn generate_callback_trait_rust_method(
             @override
             Future<$ret> $method_name($(for a in &dart_args => $a,)) {
                 return uniffiRustCallAsync(
-                    () => $(method.ffi_func().name())(
-                        uniffiClonePointer(),
-                        $(for arg in &method.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
-                    ),
+                    () {
+                        uniffiCheckNotDisposed();
+                        $(&lowered_args)
+                        return $(method.ffi_func().name())(
+                            uniffiClonePointer(),
+                            $(for arg in &arguments => $(lowered_arg_name(arg)),)
+                        );
+                    },
                     $(DartCodeOracle::async_poll(method, type_helper.get_ci())),
                     $(DartCodeOracle::async_complete(method, type_helper.get_ci())),
                     $(DartCodeOracle::async_free(method, type_helper.get_ci())),
@@ -443,10 +477,12 @@ fn generate_callback_trait_rust_method(
         quote! {
             @override
             $ret $method_name($(for a in &dart_args => $a,)) {
+                uniffiCheckNotDisposed();
+                $(&lowered_args)
                 return rustCall((status) {
                     $(method.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &method.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                        $(for arg in &arguments => $(lowered_arg_name(arg)),)
                         status
                     );
                 }, $error_handler);
@@ -456,10 +492,12 @@ fn generate_callback_trait_rust_method(
         quote! {
             @override
             $ret $method_name($(for a in &dart_args => $a,)) {
+                uniffiCheckNotDisposed();
+                $(&lowered_args)
                 return rustCallWithLifter(
                     (status) => $(method.ffi_func().name())(
                         uniffiClonePointer(),
-                        $(for arg in &method.arguments() => $(DartCodeOracle::lower_arg_with_callback_handling(arg)),)
+                        $(for arg in &arguments => $(lowered_arg_name(arg)),)
                         status
                     ),
                     $lifter,
@@ -500,24 +538,10 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
         quote!(null)
     };
 
-    // Lower every argument into a local BEFORE cloning `self`: the clone takes a
-    // Rust reference that only the FFI call releases, so a lowering that throws
-    // (an out-of-range integer, a disposed object argument) after the clone
-    // would leak it, keeping the object (and any file lock it holds) alive.
-    // Object arguments are lowered last for the same reason: lowering one
-    // clones it.
-    let is_object_arg = |arg: &uniffi_bindgen::interface::Argument| {
-        matches!(arg.as_type(), uniffi_bindgen::interface::Type::Object { .. })
-    };
+    // Arguments are lowered into locals before `self` is cloned; see
+    // `lower_arguments_first`.
     let arguments = func.arguments();
-    let lowered_args = quote!(
-        $(for arg in arguments.iter().filter(|a| !is_object_arg(a)) =>
-            final $(lowered_arg_name(arg)) = $(DartCodeOracle::lower_arg_with_callback_handling(arg));
-        )
-        $(for arg in arguments.iter().filter(|a| is_object_arg(a)) =>
-            final $(lowered_arg_name(arg)) = $(DartCodeOracle::lower_arg_with_callback_handling(arg));
-        )
-    );
+    let lowered_args = lower_arguments_first(&arguments);
 
     if func.is_async() {
         // For async methods returning objects, we need to convert the int pointer to Pointer<Void>
@@ -586,8 +610,47 @@ pub fn generate_method(func: &Method, type_helper: &dyn TypeHelperRenderer) -> d
 }
 
 /// Name of the local holding an argument's lowered value.
-fn lowered_arg_name(arg: &uniffi_bindgen::interface::Argument) -> String {
+pub(crate) fn lowered_arg_name(arg: &uniffi_bindgen::interface::Argument) -> String {
     format!("{}Lowered", DartCodeOracle::var_name(arg.name()))
+}
+
+/// True if lowering a value of `ty` clones an object reference: an object
+/// itself, or an optional, sequence or map holding objects.
+fn lowering_clones_objects(ty: &uniffi_bindgen::interface::Type) -> bool {
+    use uniffi_bindgen::interface::Type;
+    match ty {
+        Type::Object { .. } => true,
+        Type::Optional { inner_type } | Type::Sequence { inner_type } => {
+            lowering_clones_objects(inner_type)
+        }
+        Type::Map { key_type, value_type } => {
+            lowering_clones_objects(key_type) || lowering_clones_objects(value_type)
+        }
+        _ => false,
+    }
+}
+
+/// Lowers every argument into a local, to be emitted before the FFI call.
+///
+/// Lowering an object clones a Rust reference that only the FFI call
+/// releases, so a lowering that throws (an out-of-range integer, a disposed
+/// object) after a clone would leak it. Arguments whose lowering clones
+/// objects are therefore lowered last, after every argument that can fail
+/// without cloning; the receiver of a method is cloned later still, inside
+/// the call itself.
+pub(crate) fn lower_arguments_first(
+    arguments: &[&uniffi_bindgen::interface::Argument],
+) -> dart::Tokens {
+    let clones =
+        |arg: &uniffi_bindgen::interface::Argument| lowering_clones_objects(&arg.as_type());
+    quote!(
+        $(for arg in arguments.iter().filter(|a| !clones(a)) =>
+            final $(lowered_arg_name(arg)) = $(DartCodeOracle::lower_arg_with_callback_handling(arg));
+        )
+        $(for arg in arguments.iter().filter(|a| clones(a)) =>
+            final $(lowered_arg_name(arg)) = $(DartCodeOracle::lower_arg_with_callback_handling(arg));
+        )
+    )
 }
 
 fn generate_trait_helpers(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> dart::Tokens {
@@ -779,6 +842,7 @@ fn generate_trait_object(obj: &Object, type_helper: &dyn TypeHelperRenderer) -> 
             $(for method in abstract_methods => $method)
         }
 
+        @pragma("vm:isolate-unsendable")
         final class $(&impl_name) implements $cls_name {
             $(&impl_name)._internal(this._ptr) {
                 $(&finalizer_field).attach(this, _ptr, detach: this);
